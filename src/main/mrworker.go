@@ -10,17 +10,22 @@ package main
 // Please do not change this file.
 //
 
-import "6.5840/mr"
-import "plugin"
-import "os"
-import "fmt"
-import "log"
+import (
+	"fmt"
+	"log"
+	"os"
+	"plugin"
+
+	"6.5840/mr"
+)
 
 func main() {
 	if len(os.Args) != 3 {
 		fmt.Fprintf(os.Stderr, "Usage: mrworker xxx.so sockname\n")
 		os.Exit(1)
 	}
+
+	// Args[1]是map和reduce函数所在的文件（动态连接库）, Args[2]是sockname
 
 	mapf, reducef := loadPlugin(os.Args[1])
 

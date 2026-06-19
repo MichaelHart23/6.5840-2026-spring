@@ -64,3 +64,11 @@ ifeq ($(VER), 0)
 	@echo '*** Turning off -race since it may not work on a Mac'
 	$(eval RACE := $(shell echo ""))
 endif
+
+clean:
+	rm -f main/mrsequential main/mrcoordinator main/mrworker
+	rm -f mrapps/*.so
+	rm -f main/*.so
+	rm -f main/sock123
+	rm -f mr-* mr-out-*
+	rm -rf mr-tmp-*

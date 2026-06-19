@@ -6,13 +6,16 @@ package main
 // go run mrsequential.go wc.so pg*.txt
 //
 
-import "fmt"
-import "6.5840/mr"
-import "plugin"
-import "os"
-import "log"
-import "io/ioutil"
-import "sort"
+import (
+	"fmt"
+	"io/ioutil"
+	"log"
+	"os"
+	"plugin"
+	"sort"
+
+	"6.5840/mr"
+)
 
 // for sorting by key.
 type ByKey []mr.KeyValue
@@ -22,6 +25,7 @@ func (a ByKey) Len() int           { return len(a) }
 func (a ByKey) Swap(i, j int)      { a[i], a[j] = a[j], a[i] }
 func (a ByKey) Less(i, j int) bool { return a[i].Key < a[j].Key }
 
+// 串行化执行map和reduce任务的示例
 func main() {
 	if len(os.Args) < 3 {
 		fmt.Fprintf(os.Stderr, "Usage: mrsequential xxx.so inputfiles...\n")
@@ -47,6 +51,7 @@ func main() {
 		}
 		file.Close()
 		kva := mapf(filename, string(content))
+		// kva是一个slice，省略号的作用是把slice的每个元素都append到原slice上
 		intermediate = append(intermediate, kva...)
 	}
 
@@ -68,6 +73,7 @@ func main() {
 	i := 0
 	for i < len(intermediate) {
 		j := i + 1
+		// 每次只处理相同的key
 		for j < len(intermediate) && intermediate[j].Key == intermediate[i].Key {
 			j++
 		}
