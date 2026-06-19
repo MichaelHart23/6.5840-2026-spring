@@ -30,7 +30,9 @@ type Coordinator struct {
 	// Your definitions here.
 	files []string
 	nReduce int
-	taskStates []taskState  // taskID就是这个数组的下标
+	// taskID就是这个数组的下标，这个数组用来标记所有任务(包括map和reduce)执行状态
+	// 前面的部分是map task，后面的nReduce个是reduce task
+	taskStates []taskState
 	state phase  // map reduce
 	mu sync.Mutex
 }
@@ -81,6 +83,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 			if (c.taskStates[i] == taskStateUnassigned) {
 				reply.TaskType = ReduceTask
 				reply.TaskID = i
+				// key的哈希值
 				reply.KeyHash = i - len(c.files)
 				c.taskStates[i] = taskStateExecuting
 				go c.timer(i)
@@ -101,6 +104,7 @@ func (c *Coordinator) GetTask(args *GetTaskArgs, reply *GetTaskReply) error {
 	return nil
 }
 
+// 每个任务的计时线程，若超过10s没执行完，将把这个任务状态该为未分配，之后会交给另一个worker执行
 func (c *Coordinator) timer(taskID int) {
 	time.Sleep(10 * time.Second)
 	c.mu.Lock()

@@ -38,7 +38,6 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 
 	coordSockName = sockname
 
-	// Your worker implementation here.
 	for {
 		time.Sleep(time.Millisecond * 100)
 		reply := CallGetTask()
@@ -81,6 +80,7 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 					oname := fmt.Sprintf("mr-%d-%d", reply.TaskID, i)
 					os.Rename(tmpFile.Name(), oname)
 				}
+				// 通知coordinator任务完成
 				CallCompleteTask(MapTask, reply.TaskID)
 			}
 		case ReduceTask:
@@ -136,7 +136,7 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
  				}
 				tmpFile.Close()
 				os.Rename(tmpFile.Name(), outputFilename)
-
+				// 通知coordinator任务完成
 				CallCompleteTask(ReduceTask,reply.TaskID)
 			}
 		case WaitTask:
