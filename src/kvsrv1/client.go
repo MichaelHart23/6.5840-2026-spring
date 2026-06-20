@@ -1,11 +1,13 @@
 package kvsrv
 
 import (
-	"6.5840/kvsrv1/rpc"
-	"6.5840/kvtest1"
-	"6.5840/tester1"
-)
+	"log"
+	"time"
 
+	"6.5840/kvsrv1/rpc"
+	kvtest "6.5840/kvtest1"
+	tester "6.5840/tester1"
+)
 
 type Clerk struct {
 	clnt   *tester.Clnt
@@ -29,8 +31,21 @@ func MakeClerk(clnt *tester.Clnt, server string) kvtest.IKVClerk {
 // must match the declared types of the RPC handler function's
 // arguments. Additionally, reply must be passed as a pointer.
 func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
-	// You will have to modify this function.
-	return "", 0, rpc.ErrNoKey
+	for {
+		args := rpc.GetArgs{Key: key}
+		reply := rpc.GetReply{}
+		ok := ck.clnt.Call(ck.server, "KVServer.Get", &args, &reply)
+		if ok {
+			switch reply.Err {
+			case rpc.OK:
+				return reply.Value, reply.Version, reply.Err
+			case rpc.ErrNoKey:
+				return "", 0, rpc.ErrNoKey
+			default:
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
 
 // Put updates key with value only if the version in the
@@ -52,5 +67,39 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 // arguments. Additionally, reply must be passed as a pointer.
 func (ck *Clerk) Put(key, value string, version rpc.Tversion) rpc.Err {
 	// You will have to modify this function.
-	return rpc.ErrNoKey
+	args := rpc.PutArgs{Key: key, Value: value, Version: version}
+	reply := rpc.PutReply{}
+	ok := ck.clnt.Call(ck.server, "KVServer.Put", &args, &reply)
+	if ok {
+		switch reply.Err {
+		case rpc.OK:
+			return rpc.OK
+		case rpc.ErrVersion:
+			return rpc.ErrVersion
+		case rpc.ErrNoKey:
+			return rpc.ErrNoKey
+		default:
+			log.Fatalf("cline Put: unknown reply type")
+		}
+	}
+	time.Sleep(100 * time.Millisecond)
+	// 发送失败，或是请求没有送到，或是回复没有收到，重传
+	for {
+		reply := rpc.PutReply{}
+		ok := ck.clnt.Call(ck.server, "KVServer.Put", &args, &reply)
+		if ok {
+			switch reply.Err {
+			case rpc.OK:
+				return rpc.OK
+			case rpc.ErrVersion:
+				// 可能是之前的发送server的收到了，修改了，但server的回复没收到
+				return rpc.ErrMaybe
+			case rpc.ErrNoKey:
+				return rpc.ErrNoKey
+			default:
+				log.Fatalf("cline Put: unknown reply type")
+			}
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }

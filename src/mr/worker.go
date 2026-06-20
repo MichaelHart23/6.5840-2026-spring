@@ -18,7 +18,6 @@ type KeyValue struct {
 	Value string
 }
 
-
 // use ihash(key) % NReduce to choose the reduce
 // task number for each KeyValue emitted by Map.
 func ihash(key string) int {
@@ -43,124 +42,111 @@ func Worker(sockname string, mapf func(string, string) []KeyValue,
 		reply := CallGetTask()
 		switch reply.TaskType {
 		case MapTask:
-			{
-				// 读取文件
-				content, err := os.ReadFile(reply.FileName)
-				if err != nil {
-					log.Fatalf("cannot op %v", reply.FileName)
-				}
-				// 调用map函数
-				kva := mapf(reply.FileName, string(content))
-				// 在内存中完成分桶
-				nReduce := reply.NReduce
-				buckets := make([][]KeyValue, reply.NReduce)
-				n := len(kva)
-				for i := 0; i < n; i++ {
-					index := ihash(kva[i].Key) % nReduce
-					buckets[index] = append(buckets[index], kva[i])
-				}
-				// 把分桶后的中间结果写入文件
-				for i := 0; i < nReduce; i++ {
-					if buckets[i] == nil {
-						continue
-					}
-					tmpFile, err := os.CreateTemp("", "mr-tmp-*")
-					if err != nil {
-						log.Fatalf("cannot create temp file: %v", err)
-					}
-					enc := json.NewEncoder(tmpFile)
-					for _, kv := range buckets[i] {
-						if err := enc.Encode(&kv); err != nil {
-							log.Fatalf("json encode error: %v", err)
-						}
-					}
-					tmpFile.Close()
-
-					// 这里会不会有路径的问题？
-					oname := fmt.Sprintf("mr-%d-%d", reply.TaskID, i)
-					os.Rename(tmpFile.Name(), oname)
-				}
-				// 通知coordinator任务完成
-				CallCompleteTask(MapTask, reply.TaskID)
+			// 读取文件
+			content, err := os.ReadFile(reply.FileName)
+			if err != nil {
+				log.Fatalf("cannot op %v", reply.FileName)
 			}
-		case ReduceTask:
-			{
-				hashKey := reply.KeyHash
-				// 获取满足要求的文件列表
-				filenames, err := filepath.Glob(fmt.Sprintf("mr-*-%d", hashKey))
-				if err != nil {
-					log.Fatalf("glob error: %v", err)
+			// 调用map函数
+			kva := mapf(reply.FileName, string(content))
+			// 在内存中完成分桶
+			nReduce := reply.NReduce
+			buckets := make([][]KeyValue, reply.NReduce)
+			n := len(kva)
+			for i := 0; i < n; i++ {
+				index := ihash(kva[i].Key) % nReduce
+				buckets[index] = append(buckets[index], kva[i])
+			}
+			// 把分桶后的中间结果写入文件
+			for i := 0; i < nReduce; i++ {
+				if buckets[i] == nil {
+					continue
 				}
-				allKv := []KeyValue{}
-				// 读取每个文件，把kv加载到内存中
-				for _, filename := range filenames {
-					file, err := os.Open(filename)
-					if err != nil {
-						log.Fatalf("cannot open %v, %v", filename, err)
-					}
-					dec := json.NewDecoder(file)
-					for {
-						var kv KeyValue
-						if err := dec.Decode(&kv); err != nil {
-							break
-						}
-						allKv = append(allKv, kv)
-					}
-					file.Close()
-				}
-				// 排序所有key
-				sort.Slice(allKv, func(i, j int) bool {
-					return allKv[i].Key < allKv[j].Key
-				})
-
-				outputFilename := fmt.Sprintf("mr-out-%d", hashKey)
 				tmpFile, err := os.CreateTemp("", "mr-tmp-*")
 				if err != nil {
 					log.Fatalf("cannot create temp file: %v", err)
 				}
-
-				i := 0
-				for i < len(allKv) {
-					j := i + 1
-					for j < len(allKv) && allKv[j].Key == allKv[i].Key {
-						j++
+				enc := json.NewEncoder(tmpFile)
+				for _, kv := range buckets[i] {
+					if err := enc.Encode(&kv); err != nil {
+						log.Fatalf("json encode error: %v", err)
 					}
-					values := []string{}
-					for k := i; k < j; k++ {
-						values = append(values, allKv[k].Value)
-					}
-					output := reducef(allKv[i].Key, values)
-
-					fmt.Fprintf(tmpFile, "%v %v\n", allKv[i].Key, output)
-					i = j
- 				}
+				}
 				tmpFile.Close()
-				os.Rename(tmpFile.Name(), outputFilename)
-				// 通知coordinator任务完成
-				CallCompleteTask(ReduceTask,reply.TaskID)
+
+				// 这里会不会有路径的问题？
+				oname := fmt.Sprintf("mr-%d-%d", reply.TaskID, i)
+				os.Rename(tmpFile.Name(), oname)
 			}
+			// 通知coordinator任务完成
+			CallCompleteTask(MapTask, reply.TaskID)
+		case ReduceTask:
+			hashKey := reply.KeyHash
+			// 获取满足要求的文件列表
+			filenames, err := filepath.Glob(fmt.Sprintf("mr-*-%d", hashKey))
+			if err != nil {
+				log.Fatalf("glob error: %v", err)
+			}
+			allKv := []KeyValue{}
+			// 读取每个文件，把kv加载到内存中
+			for _, filename := range filenames {
+				file, err := os.Open(filename)
+				if err != nil {
+					log.Fatalf("cannot open %v, %v", filename, err)
+				}
+				dec := json.NewDecoder(file)
+				for {
+					var kv KeyValue
+					if err := dec.Decode(&kv); err != nil {
+						break
+					}
+					allKv = append(allKv, kv)
+				}
+				file.Close()
+			}
+			// 排序所有key
+			sort.Slice(allKv, func(i, j int) bool {
+				return allKv[i].Key < allKv[j].Key
+			})
+
+			outputFilename := fmt.Sprintf("mr-out-%d", hashKey)
+			tmpFile, err := os.CreateTemp("", "mr-tmp-*")
+			if err != nil {
+				log.Fatalf("cannot create temp file: %v", err)
+			}
+
+			i := 0
+			for i < len(allKv) {
+				j := i + 1
+				for j < len(allKv) && allKv[j].Key == allKv[i].Key {
+					j++
+				}
+				values := []string{}
+				for k := i; k < j; k++ {
+					values = append(values, allKv[k].Value)
+				}
+				output := reducef(allKv[i].Key, values)
+
+				fmt.Fprintf(tmpFile, "%v %v\n", allKv[i].Key, output)
+				i = j
+			}
+			tmpFile.Close()
+			os.Rename(tmpFile.Name(), outputFilename)
+			// 通知coordinator任务完成
+			CallCompleteTask(ReduceTask, reply.TaskID)
 		case WaitTask:
-			{
-				time.Sleep(time.Second)
-				continue
-			}
+			time.Sleep(time.Second)
+			continue
 		case DoneTask:
-			{
-				return
-			}
+			return
 		case NoReply:
-			{
-				return
-			}
+			return
 		default:
-			{
-				return
-			}
+			return
 		}
 	}
 
 }
-
 
 // example function to show how to make an RPC call to the coordinator.
 //
