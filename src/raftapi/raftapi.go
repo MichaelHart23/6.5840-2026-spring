@@ -22,6 +22,7 @@ type Raft interface {
 //
 // You'll find the Snapshot fields useful later in the lab.
 // Exactly one of CommandValid and SnapshotValid should be true.
+// raft apply log需要通过这个，收到InstallSnapshot RPC的时候也调用这个
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
