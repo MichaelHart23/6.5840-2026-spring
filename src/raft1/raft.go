@@ -136,7 +136,7 @@ func (rf *Raft) log(index int) LogEntry {
 // 2 什么状态切换需要重置election Timer呢？
 
 // 在持有锁的情况下调用
-// 当收到RPC request或reply中的term大于自己的时，被调用
+// 当且仅当收到RPC request或reply中的term大于自己的时，被调用
 func (rf *Raft) updateTermAndBecomeFollower(term int) {
 	// 更新任期并转换为follower
 	rf.currentTerm = term
@@ -241,7 +241,7 @@ func (rf *Raft) Snapshot(index int, snapshot []byte) {
 		log.Fatalf("snapshot contains logs exceed the boundary")
 	}
 	rf.logs = rf.logs[rf.index(index):] // 包括这个snapshot的最后一个log，并把它作为0位的log
-	rf.snapshotIndex = index  // 这一行不能和上一行调换顺序，否则index函数会出错，因为index利用了snapshotIndex来计算
+	rf.snapshotIndex = index            // 这一行不能和上一行调换顺序，否则index函数会出错，因为index利用了snapshotIndex来计算
 	rf.snapshot = snapshot
 	rf.persist()
 }
@@ -317,6 +317,7 @@ type InstallSnapshotReply struct {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
+	log.Printf("server %d receive a AppendEntried RPC from server %d, args is %v", rf.me, args.LeaderID, args)
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
 		reply.Success = false
@@ -325,7 +326,13 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 到此为止，对方的term不必自己小，可以认为对方就是current leader
 	// 可以认为收到leader的心跳，重置electionTimer，并设置term和follower
 	rf.resetElectionTimer()
-	rf.updateTermAndBecomeFollower(args.Term)
+	// 之前我在这里是无脑调用rf.updateTermAndBecomeFollower(args.Term)
+	// 因为到这里已经确定对方是leader了，无论自己term如何，是不是follower，变成这样就好了
+	// 但我忽略了这个函数还会把voteFor设置为-1，这就可能导致一次任期出现两个leader
+	if args.Term > rf.currentTerm || rf.raftState != RaftFollower{
+		rf.updateTermAndBecomeFollower(args.Term)
+	}
+	
 
 	rf.leaderID = args.LeaderID // 设置leader ID
 
@@ -346,6 +353,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			reply.XIndex = -1
 			reply.XTerm = -1
 		} else {
+			// 上一个log的term不匹配
 			reply.XTerm = rf.log(args.PrevLogIndex).Term
 			XIndex := args.PrevLogIndex
 			for rf.log(XIndex).Term == rf.log(args.PrevLogIndex).Term {
@@ -367,9 +375,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		localLogIndex++
 		entriesIndex++
 	}
-	// 在不一样的地方截断follower的log, 并追加leader的log
-	rf.logs = rf.logs[0:rf.index(localLogIndex)]
-	rf.logs = append(rf.logs, args.Entries[entriesIndex:]...)
+	if entriesIndex < len(args.Entries){
+		// 只要leader发过来的entries还有剩余，截断并追加
+		rf.logs = rf.logs[0:rf.index(localLogIndex)]
+		rf.logs = append(rf.logs, args.Entries[entriesIndex:]...)
+	}
+
 	// for entriesIndex < len(args.Entries) {
 	// 	if localLogIndex > rf.GetLastLogIndex() {
 	// 		rf.logs = append(rf.logs, args.Entries[entriesIndex])
@@ -428,6 +439,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 	// 	return
 	// }
 	if args.LastLogTerm > rf.GetLastLogTerm() {
+		log.Printf("server %d get a RequestVote RPC from server %d and vote for it on term %d", rf.me, args.CandidateId, args.Term)
 		reply.VoteGranted = true
 		rf.voteFor = args.CandidateId // 记录自己的投票对象
 		rf.resetElectionTimer()       // 投出一票，重置election Timer
@@ -438,6 +450,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		return
 	}
 	if args.LastLogIndex >= rf.GetLastLogIndex() {
+		log.Printf("server %d get a RequestVote RPC from server %d and vote for it on term %d", rf.me, args.CandidateId, args.Term)
 		reply.VoteGranted = true
 		rf.voteFor = args.CandidateId
 		rf.resetElectionTimer() // 投出一票，重置election Timer
