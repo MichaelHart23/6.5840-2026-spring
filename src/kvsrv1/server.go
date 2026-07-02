@@ -25,12 +25,10 @@ type VersionedValue struct {
 type KVServer struct {
 	mu      sync.Mutex
 	table   map[string]VersionedValue
-	// Your definitions here.
 }
 
 func MakeKVServer() *KVServer {
 	kv := &KVServer{}
-	// Your code here.
 	kv.table = make(map[string]VersionedValue)
 	return kv
 }
@@ -38,7 +36,6 @@ func MakeKVServer() *KVServer {
 // Get returns the value and version for args.Key, if args.Key
 // exists. Otherwise, Get returns ErrNoKey.
 func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
-	// Your code here.
 	kv.mu.Lock()
 	defer kv.mu.Unlock()
 	key := args.Key
