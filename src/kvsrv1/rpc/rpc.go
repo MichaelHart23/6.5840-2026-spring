@@ -26,6 +26,8 @@ type PutArgs struct {
 
 type PutReply struct {
 	Err Err
+
+	LeaderHint int  // 当且仅当Err类型是WrongLeader时，这个字段才有效
 }
 
 type GetArgs struct {
@@ -36,5 +38,7 @@ type GetReply struct {
 	Value   string
 	Version Tversion
 	Err     Err
+
+	LeaderHint  int // 当且仅当Err类型是WrongLeader时，这个字段才有效
 }
 

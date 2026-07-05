@@ -36,7 +36,8 @@ const (
 	RaftFollower
 )
 
-const TIME_INTERVAL_TO_SEND_HEART_BEAT = 120 // ms
+// 在lab3 raft里说明里，提到心跳间隔不能大于一秒10次，但是在lab4中，为了吞吐量，我这里把心跳间隔大大的缩短了
+const TIME_INTERVAL_TO_SEND_HEART_BEAT = 20 // ms
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
@@ -109,6 +110,15 @@ type Raft struct {
 	// 并且GetLastLogIndex()，index()这些函数也能完美适配，就这么办了！
 	snapshotIndex int
 	snapshot      []byte
+
+	// 用于通知apply协程对log进行apply的，当前运行机制是，commit协程每5ms跑一次，如果跑完之后有能apply的，就唤醒apply协程
+	// 而不是双方各自睡一会抢锁。
+	// 我真蠢啊，只有leader能commit，但follower也得apply啊
+	// 或许可以leader和follower区别对待，在leader上启用这个channel，follower上就正常sleep？写起来加锁解锁太麻烦，太丑了，太怪了
+	// applyNotify  chan int
+
+	// 用于通知heartBear协程向follower发AppendEntries RPC的，每当上层调用Start，Append了一个log，就通过这个进行通知
+	applyAppend chan int
 }
 
 func (rf *Raft) GetLastLogIndex() int {
@@ -161,6 +171,12 @@ func (rf *Raft) GetState() (int, bool) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
 	return rf.currentTerm, rf.raftState == RaftLeader
+}
+
+func (rf *Raft) GetLeader() int {
+	rf.mu.Lock()
+	defer rf.mu.Unlock()
+	return rf.leaderID
 }
 
 // save Raft's persistent state to stable storage,
@@ -317,7 +333,7 @@ type InstallSnapshotReply struct {
 func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("server %d receive a AppendEntried RPC from server %d, args is %v", rf.me, args.LeaderID, args)
+	// log.Printf("server %d receive a AppendEntried RPC from server %d, args is %v", rf.me, args.LeaderID, args)
 	reply.Term = rf.currentTerm
 	if args.Term < rf.currentTerm {
 		reply.Success = false
@@ -329,10 +345,9 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// 之前我在这里是无脑调用rf.updateTermAndBecomeFollower(args.Term)
 	// 因为到这里已经确定对方是leader了，无论自己term如何，是不是follower，变成这样就好了
 	// 但我忽略了这个函数还会把voteFor设置为-1，这就可能导致一次任期出现两个leader
-	if args.Term > rf.currentTerm || rf.raftState != RaftFollower{
+	if args.Term > rf.currentTerm || rf.raftState != RaftFollower {
 		rf.updateTermAndBecomeFollower(args.Term)
 	}
-	
 
 	rf.leaderID = args.LeaderID // 设置leader ID
 
@@ -356,11 +371,19 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 			// 上一个log的term不匹配
 			reply.XTerm = rf.log(args.PrevLogIndex).Term
 			XIndex := args.PrevLogIndex
-			for rf.log(XIndex).Term == rf.log(args.PrevLogIndex).Term {
+			for XIndex > rf.snapshotIndex && rf.log(XIndex).Term == rf.log(args.PrevLogIndex).Term {
 				XIndex--
 			}
-			reply.XIndex = XIndex + 1
-			reply.XLen = -1
+			if XIndex == rf.snapshotIndex {
+				// 这个term的log跨过了snapshotIndex
+				// 让leader的处理走XLen的分支
+				reply.XLen = rf.snapshotIndex + 1
+				reply.XIndex = -1
+				reply.XTerm = -1
+			} else {
+				reply.XIndex = XIndex + 1
+				reply.XLen = -1
+			}
 		}
 		return
 	}
@@ -375,7 +398,7 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 		localLogIndex++
 		entriesIndex++
 	}
-	if entriesIndex < len(args.Entries){
+	if entriesIndex < len(args.Entries) {
 		// 只要leader发过来的entries还有剩余，截断并追加
 		rf.logs = rf.logs[0:rf.index(localLogIndex)]
 		rf.logs = append(rf.logs, args.Entries[entriesIndex:]...)
@@ -417,6 +440,7 @@ func (rf *Raft) RequestVote(args *RequestVoteArgs, reply *RequestVoteReply) {
 		// 收到一个任期比自己大的任期，可能是正常的候选人自增任期，也可能由于网络问题自己落后了
 		// 更新任期并转换为follower
 		rf.updateTermAndBecomeFollower(args.Term)
+		// rf.resetElectionTimer()
 		reply.Term = rf.currentTerm
 	}
 	if rf.voteFor != -1 && rf.voteFor != args.CandidateId {
@@ -474,7 +498,15 @@ func (rf *Raft) InstallSnapshot(args *InstallSnapshotArgs, reply *InstallSnapsho
 	}
 	// 相当于收到leader的心跳，重置timer; 设置leader ID
 	rf.resetElectionTimer()
+
 	rf.leaderID = args.LeaderID
+	
+	if args.LastIncludedIndex <= rf.snapshotIndex {
+		// 本地已经有更新的snapshot了
+		// rf.snapshot = args.Data
+		// rf.persist()
+		return
+	}
 
 	if rf.GetLastLogIndex() > args.LastIncludedIndex {
 		// 当snapshot的内容是within当前raft的log中的时候，截断log，存储
@@ -683,6 +715,7 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return 0, 0, false
 	}
 	rf.logs = append(rf.logs, LogEntry{Command: command, Term: rf.currentTerm})
+	log.Printf("raft server %d receive a log: %v on term %d", rf.me, command, rf.currentTerm)
 
 	rf.persist() // 持久化数据
 
@@ -903,13 +936,19 @@ func (rf *Raft) commit() {
 
 		rf.mu.Unlock()
 
-		time.Sleep(100 * time.Millisecond) // 睡个 300 ms
+		// time.Sleep(2 * time.Millisecond) // 睡个 5 ms
 	}
 }
 
 // 后台不断尝试apply的 goroutine
 func (rf *Raft) apply() {
 	for {
+		// rf.mu.Lock()
+		// if rf.raftState == RaftLeader {
+		// 	rf.mu.Unlock()
+		// 	<- rf.applyNotify
+		// 	rf.mu.Lock()
+		// }
 		rf.mu.Lock()
 		start := rf.lastApplied + 1
 		end := rf.commitIndex
@@ -927,9 +966,13 @@ func (rf *Raft) apply() {
 		}
 		rf.mu.Unlock()
 		for _, msg := range msgs {
+			// log.Printf("server %d applied log %d", rf.me, msg.CommandIndex)
 			rf.applyCh <- msg
 		}
-		time.Sleep(100 * time.Millisecond) // 睡个 300 ms
+		// if rf.raftState == RaftFollower {
+		// 	time.Sleep(5 * time.Millisecond) // 睡个 5 ms
+		// }
+		// time.Sleep(2 * time.Millisecond) // 睡个 5 ms
 	}
 }
 
@@ -966,6 +1009,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	rf.snapshotIndex = 0
 
+	// rf.applyNotify = make(chan int)
+
 	// rf.chBecomeLeader = make(chan int)
 	// rf.chNotLeader = make(chan int)
 
@@ -974,7 +1019,8 @@ func Make(peers []*labrpc.ClientEnd, me int,
 	rf.snapshot = persister.ReadSnapshot()
 
 	if rf.snapshotIndex != 0 {
-		// 快照不为空，说明是从crash中恢复的，正确设置commitIndex和lastApplied
+		// 快照不为空，说明是从crash中恢复的，且crash之前也有快照。
+		// 正确设置commitIndex和lastApplied
 		rf.commitIndex = rf.snapshotIndex
 		rf.lastApplied = rf.snapshotIndex
 	}

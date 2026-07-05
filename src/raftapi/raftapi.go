@@ -10,6 +10,8 @@ type Raft interface {
 	// leader
 	GetState() (int, bool)
 
+	GetLeader() (int)
+
 	// For Snaphots (3D)
 	Snapshot(index int, snapshot []byte)
 	PersistBytes() int
@@ -22,12 +24,15 @@ type Raft interface {
 //
 // You'll find the Snapshot fields useful later in the lab.
 // Exactly one of CommandValid and SnapshotValid should be true.
-// raft apply log需要通过这个，收到InstallSnapshot RPC的时候也调用这个
+
+// raft applies log by this，收到InstallSnapshot RPC的时候也调用这个
+//raft通过这个，通知上层哪些log已经提交，或者snapshot了哪些log
 type ApplyMsg struct {
 	CommandValid bool
 	Command      interface{}
 	CommandIndex int
 
+	// 当follower收到来自leader的InstallSnapshot RPC后，通过以下参数通知上层
 	SnapshotValid bool
 	Snapshot      []byte
 	SnapshotTerm  int
