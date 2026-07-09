@@ -3,14 +3,15 @@ package shardkv
 import (
 	//"log"
 	"fmt"
+	"log"
 	"testing"
 	"time"
 
 	"6.5840/kvsrv1/rpc"
-	"6.5840/kvtest1"
+	kvtest "6.5840/kvtest1"
 	"6.5840/shardkv1/shardcfg"
 	"6.5840/shardkv1/shardctrler"
-	"6.5840/tester1"
+	tester "6.5840/tester1"
 )
 
 const (
@@ -75,6 +76,43 @@ func TestStaticOneShardGroup5A(t *testing.T) {
 	}
 }
 
+func TestMyJoinBasic5A(t *testing.T) {
+	ts := MakeTest(t, "Test (5A): a group joins...", true)
+	defer ts.Cleanup()
+
+	ts.setupKVService()
+	ck := ts.MakeClerk()
+	ka, va := ts.SpreadPuts(ck, NKEYS)
+
+	sck := ts.ShardCtrler()
+	cfg := sck.Query()
+
+	gid2 := ts.newGid()
+	if ok := ts.joinGroups(sck, []tester.Tgid{gid2}); !ok {
+		ts.t.Fatalf("TestJoinBasic5A: joinGroups failed")
+	}
+
+	log.Printf("Join a Group success")
+
+	cfg1 := sck.Query()
+	if cfg.Num+1 != cfg1.Num {
+		ts.t.Fatalf("TestJoinBasic5A: wrong num %d expected %d ", cfg1.Num, cfg.Num+1)
+	}
+
+	// time.Sleep(3 * time.Second)
+	log.Printf("Num is correct")
+
+	if !cfg1.IsMember(gid2) {
+		ts.t.Fatalf("TestJoinBasic5A: %d isn't a member of %v", gid2, cfg1)
+	}
+
+	for i := 0; i < len(ka); i++ {
+		ts.CheckGet(ck, ka[i], va[i], rpc.Tversion(1))
+		// time.Sleep(3 * time.Second)
+		log.Printf("loop1 done once")
+	}
+}
+
 // test shardctrler's join, which adds a new group Gid2 and must move
 // shards to the new group and the old group should reject Get/Puts on
 // shards that moved.
@@ -94,20 +132,39 @@ func TestJoinBasic5A(t *testing.T) {
 		ts.t.Fatalf("TestJoinBasic5A: joinGroups failed")
 	}
 
+	log.Printf("Join a Group success")
+
 	cfg1 := sck.Query()
 	if cfg.Num+1 != cfg1.Num {
 		ts.t.Fatalf("TestJoinBasic5A: wrong num %d expected %d ", cfg1.Num, cfg.Num+1)
 	}
 
+	// time.Sleep(3 * time.Second)
+	log.Printf("Num is correct")
+
 	if !cfg1.IsMember(gid2) {
 		ts.t.Fatalf("TestJoinBasic5A: %d isn't a member of %v", gid2, cfg1)
 	}
 
+	// time.Sleep(3 * time.Second)
+	log.Printf("%d is a member of %v", gid2, cfg1)
+
+	// time.Sleep(3 * time.Second)
+
 	ts.checkShutdownSharding(gid1, ka, va)
+
+	// time.Sleep(4 * time.Second)
+	log.Printf("After shutdown gid1")
+	// time.Sleep(4 * time.Second)
 
 	for i := 0; i < len(ka); i++ {
 		ts.CheckGet(ck, ka[i], va[i], rpc.Tversion(1))
+		// time.Sleep(3 * time.Second)
+		// log.Printf("loop1 done once")
 	}
+
+	// time.Sleep(3 * time.Second)
+	log.Printf("phase1 done")
 
 	ts.checkShutdownSharding(gid2, ka, va)
 
@@ -339,7 +396,7 @@ func TestProgressJoin5A(t *testing.T) {
 	ka, va := ts.SpreadPuts(ck, NKEYS)
 
 	sck := ts.ShardCtrler()
-	grps := ts.groups(NJOIN)
+	grps := ts.groups(NJOIN)  // 另外4个Groups
 	ts.joinGroups(sck, grps)
 
 	cfg := sck.Query()
@@ -436,6 +493,7 @@ func concurrentClerk(t *testing.T, nclnt int, reliable bool, part string) {
 	ka := kvtest.MakeKeys(NKEYS)
 	ch := make(chan []kvtest.ClntRes)
 
+	// 多client随机读写
 	go func(ch chan []kvtest.ClntRes) {
 		rs := ts.SpawnClientsAndWait(nclnt, NSEC*time.Second, func(me int, ck kvtest.IKVClerk, done chan struct{}) kvtest.ClntRes {
 			return ts.OneClientPut(me, ck, ka, done)
@@ -448,13 +506,15 @@ func concurrentClerk(t *testing.T, nclnt int, reliable bool, part string) {
 	if ok := ts.joinGroups(sck, grps); !ok {
 		t.Fatalf("concurrentClerk: joinGroups failed")
 	}
+	log.Printf("After Join")
 
 	if ok := ts.leaveGroups(sck, grps); !ok {
 		t.Fatalf("concurrentClerk: leaveGroups failed")
 	}
-
+	log.Printf("After Leave")
+	log.Printf("Waiting for ch")
 	<-ch
-
+	log.Printf("Start CheckPorcupine")
 	ts.CheckPorcupine()
 }
 

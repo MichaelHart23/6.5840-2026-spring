@@ -14,6 +14,8 @@ type FreezeShardReply struct {
 	State []byte
 	Num   shardcfg.Tnum
 	Err   rpc.Err
+
+	LeaderHint int  // 当且仅当Err类型是WrongLeader时，这个字段才有效
 }
 
 type InstallShardArgs struct {
@@ -24,6 +26,8 @@ type InstallShardArgs struct {
 
 type InstallShardReply struct {
 	Err rpc.Err
+
+	LeaderHint int  // 当且仅当Err类型是WrongLeader时，这个字段才有效
 }
 
 type DeleteShardArgs struct {
@@ -33,4 +37,6 @@ type DeleteShardArgs struct {
 
 type DeleteShardReply struct {
 	Err rpc.Err
+
+	LeaderHint int  // 当且仅当Err类型是WrongLeader时，这个字段才有效
 }

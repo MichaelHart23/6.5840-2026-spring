@@ -15,7 +15,6 @@ import (
 
 // RSM通知底层raft写入log的信息载体，也即是raft.Start的参数类型
 type Op struct {
-	// Your definitions here.
 	// Field names must start with capital letters,
 	// otherwise RPC will break.
 	Id  int // 用来标识每一个OP的标识符，用于在收到raft的apply msg的时候，确定是哪一个OP被applied了
@@ -101,8 +100,8 @@ func (rsm *RSM) reader() {
 					ch <- op
 				}
 				if rsm.maxraftstate > 0 && rsm.rf.PersistBytes() > rsm.maxraftstate {
-					rsm.mu.Unlock()
-					// 解锁执行，这不需要在锁着的时候执行
+					rsm.mu.Unlock()  // 解锁执行，这不需要在锁着的时候执行
+					// 这个CommandIndex对应的指令刚被执行完，所以就是与当下快照对应的snapshot index
 					rsm.rf.Snapshot(msg.CommandIndex, rsm.sm.Snapshot())
 					continue
 				}
@@ -152,7 +151,7 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 		rsm.mu.Unlock()
 		return rpc.ErrWrongLeader, rsm.rf.GetLeader()
 	}
-	ch := make(chan Op)
+	ch := make(chan Op, 2)
 	// 用logIndex做匹配
 	rsm.notify[logIndex] = ch
 	rsm.mu.Unlock()
@@ -182,7 +181,7 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 				return rpc.ErrWrongLeader, rsm.rf.GetLeader()
 			}
 			return rpc.OK, returnOp.Req
-		case <-time.After(100 * time.Millisecond):
+		case <-time.After(20 * time.Millisecond):
 			curTerm, stillLeader := rsm.rf.GetState()
 			if !stillLeader || curTerm != term {
 				// 如果一个Submit迟迟没有收到raft的apply，且term发生了变化，
@@ -190,7 +189,7 @@ func (rsm *RSM) Submit(req any) (rpc.Err, any) {
 				rsm.mu.Lock()
 				delete(rsm.notify, logIndex)
 				rsm.mu.Unlock()
-				return rpc.ErrWrongLeader, nil
+				return rpc.ErrWrongLeader, rsm.rf.GetLeader()
 			}
 		}
 	}

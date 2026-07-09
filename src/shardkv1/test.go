@@ -9,12 +9,12 @@ import (
 	"testing"
 	"time"
 
-	"6.5840/kvsrv1"
+	kvsrv "6.5840/kvsrv1"
 	"6.5840/kvsrv1/rpc"
-	"6.5840/kvtest1"
+	kvtest "6.5840/kvtest1"
 	"6.5840/shardkv1/shardcfg"
 	"6.5840/shardkv1/shardctrler"
-	"6.5840/tester1"
+	tester "6.5840/tester1"
 )
 
 const (
@@ -199,6 +199,7 @@ func (ts *Test) checkShutdownSharding(down tester.Tgid, ka []string, va []string
 		ck1 := ts.MakeClerk()
 		go func(i int) {
 			v, _, _ := ck1.Get(ka[i])
+			// log.Printf("Get Return a Value")
 			if atomic.LoadInt32(&done) == 1 {
 				return
 			}
@@ -224,7 +225,8 @@ func (ts *Test) checkShutdownSharding(down tester.Tgid, ka []string, va []string
 		}
 	}
 
-	//log.Printf("%d completions out of %d; down %d", ndone, n, down)
+	// log.Printf("%d completions out of %d; down %d", ndone, n, down)
+	// time.Sleep(10 * time.Second)
 	if ndone >= n {
 		ts.Fatalf("expected less than %d completions with shard %d down\n", n, down)
 	}
@@ -382,13 +384,13 @@ func (ts *Test) concurCtrler(ck kvtest.IKVClerk, ka, va []string) {
 
 	// let f()'s run for a while
 	time.Sleep(NSEC * time.Second)
-
+	log.Printf("Get ch loop")
 	for i := 0; i < N; i++ {
 		ch <- struct{}{}
 	}
-
+	log.Printf("Start CheckGet loop")
 	for i := 0; i < len(ka); i++ {
 		ts.CheckGet(ck, ka[i], va[i], rpc.Tversion(1))
 	}
-
+	log.Printf("CheckGet done")
 }

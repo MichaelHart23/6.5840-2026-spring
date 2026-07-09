@@ -2,6 +2,7 @@ package kvtest
 
 import (
 	"fmt"
+	"log"
 	"os"
 	"sync"
 	"testing"
@@ -10,8 +11,8 @@ import (
 	"github.com/anishathalye/porcupine"
 
 	"6.5840/kvsrv1/rpc"
-	"6.5840/models1"
-	"6.5840/tester1"
+	models "6.5840/models1"
+	tester "6.5840/tester1"
 )
 
 const linearizabilityCheckTimeout = 1 * time.Second
@@ -143,6 +144,30 @@ func checkPorcupine(t *testing.T, opLog *OpLog, nsec time.Duration) {
 func (ts *Test) Get(ck IKVClerk, key string, cli int) (string, rpc.Tversion, rpc.Err) {
 	start := int64(time.Since(t0))
 	val, ver, err := ck.Get(key)
+
+	end := int64(time.Since(t0))
+	ts.OpInc()
+	if ts.oplog != nil {
+		ts.oplog.Append(porcupine.Operation{
+			Input:    models.KvInput{Op: 0, Key: key},
+			Output:   models.KvOutput{Value: val, Version: uint64(ver), Err: string(err)},
+			Call:     start,
+			Return:   end,
+			ClientId: cli,
+		})
+	}
+	return val, ver, err
+}
+
+// 加上用于测试的，多打印了一些log
+func (ts *Test) Get1(ck IKVClerk, key string, cli int) (string, rpc.Tversion, rpc.Err) {
+	start := int64(time.Since(t0))
+	val, ver, err := ck.Get(key)
+
+	time.Sleep(4 * time.Second)
+	log.Printf("Get Return")
+	time.Sleep(4 * time.Second)
+	
 	end := int64(time.Since(t0))
 	ts.OpInc()
 	if ts.oplog != nil {

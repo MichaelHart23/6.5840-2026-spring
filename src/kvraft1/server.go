@@ -20,8 +20,6 @@ type VersionedValue struct {
 type KVServer struct {
 	me  int
 	rsm *rsm.RSM
-
-	// Your definitions here.
 	mu    sync.Mutex
 	table map[string]VersionedValue
 }
@@ -124,20 +122,14 @@ func (kv *KVServer) Restore(data []byte) {
 // 由于要实现线性一致性，所以get只能返回已提交的数据
 // 读操作也要写log吗？要的
 func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
-	// Your code here. Use kv.rsm.Submit() to submit args
-	// You can use go's type casts to turn the any return value
-	// of Submit() into a GetReply: rep.(rpc.GetReply)
-
-	// 通过submit拿到
-	// 1 是否找错leader
-	// 2 DoOp的返回值，也即reply本身
+	// 通过submit拿到: 1 是否找错leader; 2 DoOp的返回值，也即reply本身
 	err, res := kv.rsm.Submit(*args)
 	if err == rpc.ErrWrongLeader {
 		reply.Err = err
 		var ok bool
 		reply.LeaderHint, ok = res.(int)
 		if !ok {
-			log.Printf("leaderHint convert fail")
+			reply.LeaderHint = -1 // Submit可能在轮询的分支里返回nil，-1表示不知道
 		}
 		return
 	}
@@ -149,13 +141,7 @@ func (kv *KVServer) Get(args *rpc.GetArgs, reply *rpc.GetReply) {
 }
 
 func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
-	// Your code here. Use kv.rsm.Submit() to submit args
-	// You can use go's type casts to turn the any return value
-	// of Submit() into a PutReply: rep.(rpc.PutReply)
-
-	// 通过submit拿到
-	// 1 是否找错leader
-	// 2 DoOp的返回值，也即reply本身
+	// 通过submit拿到: 1 是否找错leader; 2 DoOp的返回值，也即reply本身
 	err, res := kv.rsm.Submit(*args)
 	log.Printf("server %d Put Submit returned err=%v, res=%v", kv.me, err, res)
 	if err == rpc.ErrWrongLeader {
@@ -163,7 +149,7 @@ func (kv *KVServer) Put(args *rpc.PutArgs, reply *rpc.PutReply) {
 		var ok bool
 		reply.LeaderHint, ok = res.(int)
 		if !ok {
-			log.Printf("leaderHint convert fail")
+			reply.LeaderHint = -1 // Submit可能在轮询的分支里返回nil，-1表示不知道
 		}
 		return
 	}

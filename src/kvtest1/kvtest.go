@@ -3,6 +3,8 @@ package kvtest
 import (
 	"encoding/json"
 	"fmt"
+	"log"
+
 	//"log"
 	"math/rand"
 	"strconv"
@@ -10,7 +12,7 @@ import (
 	"time"
 
 	"6.5840/kvsrv1/rpc"
-	"6.5840/tester1"
+	tester "6.5840/tester1"
 )
 
 // The tester generously allows solutions to complete elections in one second
@@ -127,6 +129,31 @@ func (ts *Test) CheckGet(ck IKVClerk, key, value string, version rpc.Tversion) {
 	}
 	text := fmt.Sprintf("Get(%v) returns (%v, %v) as expected", key, val, ver)
 	tester.AnnotateCheckerSuccess(text, "OK")
+}
+
+// 加上用于测试的，多打印了一些log
+func (ts *Test) CheckGet1(ck IKVClerk, key, value string, version rpc.Tversion) {
+	tester.AnnotateCheckerBegin(fmt.Sprintf("checking Get(%v) = (%v, %v)", key, value, version))
+	val, ver, err := ts.Get1(ck, key, 0)
+	time.Sleep(4 * time.Second)
+	log.Printf("ts.Get Return")
+	time.Sleep(4 * time.Second)
+	if err != rpc.OK {
+		text := fmt.Sprintf("Get(%v) returns error = %v", key, err)
+		tester.AnnotateCheckerFailure(text, text)
+		ts.Fatalf(text)
+	}
+	if val != value || ver != version {
+		text := fmt.Sprintf("Get(%v) returns (%v, %v) != (%v, %v)", key, val, ver, value, version)
+		tester.AnnotateCheckerFailure(text, text)
+		ts.Fatalf(text)
+	}
+	text := fmt.Sprintf("Get(%v) returns (%v, %v) as expected", key, val, ver)
+	tester.AnnotateCheckerSuccess(text, "OK")
+	
+	time.Sleep(4 * time.Second)
+	log.Printf("CheckGet end")
+	time.Sleep(4 * time.Second)
 }
 
 type ClntRes struct {

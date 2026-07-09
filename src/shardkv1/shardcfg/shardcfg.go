@@ -8,7 +8,7 @@ import (
 	"slices"
 	"testing"
 
-	"6.5840/tester1"
+	tester "6.5840/tester1"
 )
 
 type Tshid int
@@ -35,7 +35,9 @@ func Key2Shard(key string) Tshid {
 
 // A configuration -- an assignment of shards to groups.
 // Please don't change this.
+// 一共有NShards个分片，这些分片由几个server group承载
 type ShardConfig struct {
+	// 相当于config的版本号，每次配置改变, 也就是Join和Leave函数被调用，它都会自增1
 	Num    Tnum                     // config number
 	Shards [NShards]tester.Tgid     // shard -> gid
 	Groups map[tester.Tgid][]string // gid -> servers[]
@@ -77,44 +79,48 @@ func (cfg *ShardConfig) Copy() *ShardConfig {
 }
 
 // mostgroup, mostn, leastgroup, leastn
+// 分析哪个group承载着最多的shards，哪个group承载着最少的shards
 func analyze(c *ShardConfig) (tester.Tgid, int, tester.Tgid, int) {
 	counts := map[tester.Tgid]int{}
-	for _, g := range c.Shards {
-		counts[g] += 1
+	// 统计每个group有几个shards
+	for _, gid := range c.Shards {
+		counts[gid] += 1
 	}
 
-	mn := -1
-	var mg tester.Tgid = -1
-	ln := 257
-	var lg tester.Tgid = -1
+	mostShardsNum := -1
+	var mostGroup tester.Tgid = -1
+	leastShardsNum := 257
+	var leastGroup tester.Tgid = -1
 	// Enforce deterministic ordering, map iteration
 	// is randomized in go
+	// 收集所有gid
 	groups := make([]tester.Tgid, len(c.Groups))
 	i := 0
-	for k := range c.Groups {
-		groups[i] = k
+	for gid := range c.Groups {
+		groups[i] = gid
 		i++
 	}
 	slices.Sort(groups)
-	for _, g := range groups {
-		if counts[g] < ln {
-			ln = counts[g]
-			lg = g
+	// 找到shards最多/最少的group，及其shards数
+	for _, gid := range groups {
+		if counts[gid] < leastShardsNum {
+			leastShardsNum = counts[gid]
+			leastGroup = gid
 		}
-		if counts[g] > mn {
-			mn = counts[g]
-			mg = g
+		if counts[gid] > mostShardsNum {
+			mostShardsNum = counts[gid]
+			mostGroup = gid
 		}
 	}
 
-	return mg, mn, lg, ln
+	return mostGroup, mostShardsNum, leastGroup, leastShardsNum
 }
 
 // return GID of group with least number of
 // assigned shards.
 func least(c *ShardConfig) tester.Tgid {
-	_, _, lg, _ := analyze(c)
-	return lg
+	_, _, leastGroup, _ := analyze(c)
+	return leastGroup
 }
 
 // balance assignment of shards to groups.
@@ -129,42 +135,46 @@ func (c *ShardConfig) Rebalance() {
 	}
 
 	// assign all unassigned shards
-	for s, g := range c.Shards {
-		_, ok := c.Groups[g]
+	for s, gid := range c.Shards {
+		_, ok := c.Groups[gid]
 		if ok == false {
-			lg := least(c)
-			c.Shards[s] = lg
+			// 这个group已经不存在了，把这个group的shard分配给拥有shards最少的group
+			leastGroup := least(c)
+			c.Shards[s] = leastGroup
 		}
 	}
 
 	// move shards from most to least heavily loaded
 	for {
-		mg, mn, lg, ln := analyze(c)
-		if mn < ln+2 {
+		mostGroup, mostShardsNum, leastGroup, leastShardsNum := analyze(c)
+		if mostShardsNum < leastShardsNum+2 {
+			// 最多和最少差距不大了
 			break
 		}
-		// move 1 shard from mg to lg
+		// move 1 shard from mostGroup to leastGroup
 		for s, g := range c.Shards {
-			if g == mg {
-				c.Shards[s] = lg
+			if g == mostGroup {
+				c.Shards[s] = leastGroup
 				break
 			}
 		}
 	}
 }
 
+// 新加入一些group：kvraft组
 func (cfg *ShardConfig) Join(servers map[tester.Tgid][]string) bool {
 	changed := false
 	for gid, servers := range servers {
 		_, ok := cfg.Groups[gid]
 		if ok {
+			// 已经存在这个gid的group了
 			log.Printf("re-Join %v", gid)
 			return false
 		}
-		for xgid, xservers := range cfg.Groups {
+		for xgid, xservers := range cfg.Groups { // 遍历当前已经存在的group
 			for _, s1 := range xservers {
 				for _, s2 := range servers {
-					if s1 == s2 {
+					if s1 == s2 { // 判断有没有server重名
 						log.Fatalf("Join(%v) puts server %v in groups %v and %v", gid, s1, xgid, gid)
 					}
 				}
@@ -172,7 +182,7 @@ func (cfg *ShardConfig) Join(servers map[tester.Tgid][]string) bool {
 		}
 		// new GID
 		// modify cfg to reflect the Join()
-		cfg.Groups[gid] = servers
+		cfg.Groups[gid] = servers // 将这组kvraft加入
 		changed = true
 	}
 	if changed == false {
@@ -182,6 +192,7 @@ func (cfg *ShardConfig) Join(servers map[tester.Tgid][]string) bool {
 	return true
 }
 
+// 有一些group要离开
 func (cfg *ShardConfig) Leave(gids []tester.Tgid) bool {
 	changed := false
 	for _, gid := range gids {
@@ -220,12 +231,14 @@ func (cfg *ShardConfig) LeaveBalance(gids []tester.Tgid) bool {
 	return true
 }
 
+// 输入一个分片号，给出这个分片所在的group的gid，kvraft群
 func (cfg *ShardConfig) GidServers(sh Tshid) (tester.Tgid, []string, bool) {
 	gid := cfg.Shards[sh]
 	srvs, ok := cfg.Groups[gid]
 	return gid, srvs, ok
 }
 
+// 判断一个group是否是成员
 func (cfg *ShardConfig) IsMember(gid tester.Tgid) bool {
 	for _, g := range cfg.Shards {
 		if g == gid {
@@ -241,36 +254,39 @@ func (cfg *ShardConfig) CheckConfig(t *testing.T, groups []tester.Tgid) {
 	}
 
 	// are the groups as expected?
-	for _, g := range groups {
-		_, ok := cfg.Groups[g]
+	// 这个cfg里的group和传入的groups要包含同样的gid
+	for _, gid := range groups {
+		_, ok := cfg.Groups[gid]
 		if ok != true {
-			fatalf(t, "missing group %v", g)
+			fatalf(t, "missing group %v", gid)
 		}
 	}
 
 	// any un-allocated shards?
 	if len(groups) > 0 {
-		for s, g := range cfg.Shards {
-			_, ok := cfg.Groups[g]
+		for s, gid := range cfg.Shards {
+			_, ok := cfg.Groups[gid]
 			if ok == false {
-				fatalf(t, "shard %v -> invalid group %v", s, g)
+				// 有一个shard对应的group不存在
+				fatalf(t, "shard %v -> invalid group %v", s, gid)
 			}
 		}
 	}
 
 	// more or less balanced sharding?
+	// 找出shards最多的group和最少的group，看它们的数量差是否超过一
 	counts := map[tester.Tgid]int{}
-	for _, g := range cfg.Shards {
-		counts[g] += 1
+	for _, gid := range cfg.Shards {
+		counts[gid] += 1
 	}
 	min := 257
 	max := 0
-	for g, _ := range cfg.Groups {
-		if counts[g] > max {
-			max = counts[g]
+	for gid := range cfg.Groups {
+		if counts[gid] > max {
+			max = counts[gid]
 		}
-		if counts[g] < min {
-			min = counts[g]
+		if counts[gid] < min {
+			min = counts[gid]
 		}
 	}
 	if max > min+1 {

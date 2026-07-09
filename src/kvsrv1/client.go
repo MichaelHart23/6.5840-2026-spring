@@ -37,7 +37,7 @@ func (ck *Clerk) Get(key string) (string, rpc.Tversion, rpc.Err) {
 		if ok {
 			switch reply.Err {
 			case rpc.OK:
-				return reply.Value, reply.Version, reply.Err
+				return reply.Value, reply.Version, rpc.OK
 			case rpc.ErrNoKey:
 				return "", 0, rpc.ErrNoKey
 			default:

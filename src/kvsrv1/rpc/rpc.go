@@ -18,6 +18,12 @@ const (
 
 type Tversion uint64
 
+
+type VersionedValue struct {
+	Value   string
+	Version Tversion
+}
+
 type PutArgs struct {
 	Key     string
 	Value   string

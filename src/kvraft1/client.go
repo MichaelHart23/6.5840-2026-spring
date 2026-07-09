@@ -14,7 +14,6 @@ type Clerk struct {
 	clnt    *tester.Clnt
 	servers []string
 	leader  int // last successful leader (index into servers[])
-	// You can add to this struct.
 }
 
 func MakeClerk(clnt *tester.Clnt, servers []string) kvtest.IKVClerk {
@@ -23,7 +22,7 @@ func MakeClerk(clnt *tester.Clnt, servers []string) kvtest.IKVClerk {
 		servers: servers,
 		leader:  0,
 	}
-	// You'll have to add code here.
+	
 	return ck
 }
 

@@ -37,7 +37,7 @@ const (
 )
 
 // 在lab3 raft里说明里，提到心跳间隔不能大于一秒10次，但是在lab4中，为了吞吐量，我这里把心跳间隔大大的缩短了
-const TIME_INTERVAL_TO_SEND_HEART_BEAT = 20 // ms
+const TIME_INTERVAL_TO_SEND_HEART_BEAT = 50 // ms
 
 // A Go object implementing a single Raft peer.
 type Raft struct {
@@ -118,7 +118,9 @@ type Raft struct {
 	// applyNotify  chan int
 
 	// 用于通知heartBear协程向follower发AppendEntries RPC的，每当上层调用Start，Append了一个log，就通过这个进行通知
-	applyAppend chan int
+	newEntryCh chan struct{}
+
+	applyCond *sync.Cond
 }
 
 func (rf *Raft) GetLastLogIndex() int {
@@ -249,7 +251,7 @@ func (rf *Raft) PersistBytes() int {
 func (rf *Raft) Snapshot(index int, snapshot []byte) {
 	rf.mu.Lock()
 	defer rf.mu.Unlock()
-	log.Printf("Server %d got a snapshot call with index %d", rf.me, index)
+	log.Printf("Raft Server %d got a snapshot call with index %d", rf.me, index)
 	if index < rf.snapshotIndex {
 		return
 	}
@@ -415,7 +417,12 @@ func (rf *Raft) AppendEntries(args *AppendEntriesArgs, reply *AppendEntriesReply
 	// }
 	// 更新commitIndex
 	if args.LeaderCommit > rf.commitIndex {
+		oldCommitIndex := rf.commitIndex
 		rf.commitIndex = min(args.LeaderCommit, rf.GetLastLogIndex())
+		newCommitIndex := rf.commitIndex
+		if newCommitIndex > oldCommitIndex {
+			rf.applyCond.Signal()
+		}
 	}
 	// 持久化数据
 	rf.persist()
@@ -715,9 +722,16 @@ func (rf *Raft) Start(command interface{}) (int, int, bool) {
 		return 0, 0, false
 	}
 	rf.logs = append(rf.logs, LogEntry{Command: command, Term: rf.currentTerm})
-	log.Printf("raft server %d receive a log: %v on term %d", rf.me, command, rf.currentTerm)
+	// log.Printf("raft server %d receive a log: %v on term %d", rf.me, command, rf.currentTerm)
 
 	rf.persist() // 持久化数据
+
+	// 非阻塞发送
+	select {
+	case rf.newEntryCh <- struct{}{}:
+	default:
+	}
+	
 
 	return rf.GetLastLogIndex(), rf.currentTerm, true
 }
@@ -818,7 +832,6 @@ func (rf *Raft) ticker() {
 	rf.resetElectionTimer()
 	rf.mu.Unlock()
 	for true {
-		// Your code here (3A)
 		// Check if a leader election should be started.
 		rf.mu.Lock()
 
@@ -849,6 +862,10 @@ func (rf *Raft) heartBeat() {
 	// }
 
 	for true {
+		select {
+		case <- rf.newEntryCh:
+		case <-time.After(TIME_INTERVAL_TO_SEND_HEART_BEAT * time.Millisecond):
+		}
 		rf.mu.Lock()
 		if rf.raftState != RaftLeader {
 			rf.mu.Unlock()
@@ -899,7 +916,7 @@ func (rf *Raft) heartBeat() {
 		}
 		rf.mu.Unlock()
 
-		time.Sleep(TIME_INTERVAL_TO_SEND_HEART_BEAT * time.Millisecond)
+		// time.Sleep(TIME_INTERVAL_TO_SEND_HEART_BEAT * time.Millisecond)
 	}
 }
 
@@ -930,13 +947,14 @@ func (rf *Raft) commit() {
 
 		// 检查这个位置的 entry 是否为当前任期，仅提交自己任期内的log
 		if majorityIndex > rf.commitIndex && rf.log(majorityIndex).Term == rf.currentTerm {
-			log.Printf("server %d commits log %d on term %d, it's value %v", rf.me, majorityIndex, rf.currentTerm, rf.log(majorityIndex).Command)
+			// log.Printf("server %d commits log %d on term %d, it's value %v", rf.me, majorityIndex, rf.currentTerm, rf.log(majorityIndex).Command)
 			rf.commitIndex = majorityIndex
+			rf.applyCond.Signal()
 		}
 
 		rf.mu.Unlock()
 
-		// time.Sleep(2 * time.Millisecond) // 睡个 5 ms
+		time.Sleep(2 * time.Millisecond) // 睡个 5 ms
 	}
 }
 
@@ -950,6 +968,9 @@ func (rf *Raft) apply() {
 		// 	rf.mu.Lock()
 		// }
 		rf.mu.Lock()
+		for rf.commitIndex == rf.lastApplied {
+			rf.applyCond.Wait()
+		}
 		start := rf.lastApplied + 1
 		end := rf.commitIndex
 		msgs := make([]raftapi.ApplyMsg, end-start+1)
@@ -972,7 +993,7 @@ func (rf *Raft) apply() {
 		// if rf.raftState == RaftFollower {
 		// 	time.Sleep(5 * time.Millisecond) // 睡个 5 ms
 		// }
-		// time.Sleep(2 * time.Millisecond) // 睡个 5 ms
+		// time.Sleep(2 * time.Millisecond) // 睡个 2 ms
 	}
 }
 
@@ -1013,6 +1034,10 @@ func Make(peers []*labrpc.ClientEnd, me int,
 
 	// rf.chBecomeLeader = make(chan int)
 	// rf.chNotLeader = make(chan int)
+
+	rf.newEntryCh = make(chan struct{}, 1)
+	
+	rf.applyCond = sync.NewCond(&rf.mu)
 
 	// initialize from state persisted before a crash
 	rf.readPersist(persister.ReadRaftState())
